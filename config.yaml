@@ -1,0 +1,42 @@
+dataset:
+  train_dir: ./data/train_split
+  test_dir: ./data/test
+  val_dir: ./data/val
+  image_size: 224
+  num_workers: 4
+
+training:
+  batch_size: 128
+  lr: 1e-5
+  epochs: 30
+  w_decay: 0.1
+  warmup: 0.05
+  ema_decay: 0.998
+  amp: True
+  grad_clipping: 2.0
+
+  seed: 42
+  layerwise_lr_decay: 0.5
+  lr_scheduler: linear
+
+  lr_scheduler_params:
+    linear:
+      warmup_steps: 0.05
+      min_lr: 1e-8
+
+    cosine_warmup:
+      warmup_steps: 0.05
+      cycles: 2
+      min_lr: 1e-8
+model:
+  name: facebook/convnextv2-base-22k-224
+  num_classes: 2
+  model_params:
+    facebook/convnextv2-tiny-22k-224:
+      drop_path_rate: 0.3
+  weight: outputs/convnextv2_base_pretraining/convnextv2-base-22k-224_pretraining/last_model_ema.pth
+
+experiment:
+  project: deeplearing_2025
+  run_name: convnextv2-base-22k-224_con_linear_wdcay
+  save_dir: outputs/convnextv2_base

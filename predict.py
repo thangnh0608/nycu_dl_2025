@@ -53,6 +53,7 @@ def main():
     # 1. Load Model and Weights
     processor, model = load_hf_model(cfg.model.name, cfg.model.num_classes, cfg)
     checkpoint = torch.load(args.checkpoint, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.to(device)
     model.eval()
     ema = ModelEmaV3(
@@ -61,7 +62,7 @@ def main():
                 device=device,
                 exclude_buffers=False
             )
-    ema.module.load_state_dict(checkpoint['model_state_dict'])
+    # ema.module.load_state_dict(checkpoint['model_state_dict'])
 
     # 2. Setup Class Mapping
     # Logic: Find which index is 'real', the other is 'fake'
@@ -82,6 +83,7 @@ def main():
     transform_test = transforms.Compose([
         transforms.Resize((cfg.dataset.image_size, cfg.dataset.image_size)),
         transforms.ToTensor(),
+        transforms.Normalize(mean=processor.image_mean, std=processor.image_std)
     ])
 
     test_ds = TestDataset(cfg.dataset.test_dir, transform=transform_test)
@@ -96,12 +98,10 @@ def main():
     with torch.no_grad():
         for imgs, filenames in test_dl:
             imgs = imgs.to(device)
-            batch = processor(images=imgs, return_tensors="pt", do_rescale=False).to(device)
-            outputs = ema.module(**batch)
+            outputs = ema.module(imgs)
             preds = outputs.logits.argmax(1).cpu().tolist()
 
             for i in range(len(filenames)):
-                # Remove file extension for the filename column if needed, or keep it
                 fname = os.path.splitext(filenames[i])[0]
                 predicted_label = idx_to_class[preds[i]]
 

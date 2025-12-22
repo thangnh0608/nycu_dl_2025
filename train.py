@@ -6,7 +6,7 @@ from torch.optim.lr_scheduler import LambdaLR
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-from torchvision import datasets, transforms
+from torchvision import transforms, datasets
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 from omegaconf import OmegaConf
@@ -15,6 +15,7 @@ import random
 from datetime import datetime
 import mlflow
 import math
+from timm.optim import create_optimizer_v2
 from ema import ModelEmaV3
 from utils import make_optimizer_with_layerwise_lr, save_experiment_artifacts, set_seed, flatten_omegaconf
 
@@ -72,6 +73,7 @@ def load_hf_model(model_name, num_classes, cfg):
 def train_one_epoch(model, ema, dataloader, processor, optimizer, scheduler, criterion, device, scaler, use_amp=True, use_tqdm=True):
     model.train()
     total, correct = 0, 0
+    running_loss = 0.0
 
     iterator = tqdm(dataloader, desc="Train", leave=False) if use_tqdm else dataloader
 
@@ -80,8 +82,8 @@ def train_one_epoch(model, ema, dataloader, processor, optimizer, scheduler, cri
 
         optimizer.zero_grad()
         with torch.amp.autocast(device_type=device, enabled=use_amp):
-            batch = processor(images=imgs, return_tensors="pt", do_rescale=False).to(device)
-            outputs = model(**batch)
+            # batch = processor(images=imgs, return_tensors="pt").to(device)
+            outputs = model(imgs)
             loss = criterion(outputs.logits, labels)
 
         # Scales loss and calls backward()
@@ -100,17 +102,18 @@ def train_one_epoch(model, ema, dataloader, processor, optimizer, scheduler, cri
         preds = outputs.logits.argmax(1)
         correct += (preds == labels).sum().item()
         total += len(labels)
-
+        running_loss += loss.item() * len(labels)
         if use_tqdm:
             iterator.set_postfix({
-                "batch_loss": f"{loss.item():.4f}",
-                "batch_acc": f"{correct / total:.4f}"
+                "train loss": f"{running_loss / total:.4f}",
+                "train acc": f"{correct / total:.4f}"
             })
 
     acc = correct / total
+    epoch_loss = running_loss / total
     logger.info(f"Train Acc: {acc:.4f}")
 
-    return acc, loss.item()
+    return acc, epoch_loss
 
 
 def evaluate(model, dataloader, processor, device, name="Val", use_tqdm=True):
@@ -122,8 +125,8 @@ def evaluate(model, dataloader, processor, device, name="Val", use_tqdm=True):
     with torch.no_grad():
         for imgs, labels in iterator:
             imgs, labels = imgs.to(device), labels.to(device)
-            batch = processor(images=imgs, return_tensors="pt", do_rescale=False).to(device)
-            outputs = model(**batch)
+            # batch = processor(images=imgs, return_tensors="pt", ).to(device)
+            outputs = model(imgs)
 
             preds = outputs.logits.argmax(1)
             correct += (preds == labels).sum().item()
@@ -194,8 +197,8 @@ def run_inference(device, processor, model, ema, class_to_idx, test_dl):
     with torch.no_grad():
         for imgs, filenames in test_dl:
             imgs = imgs.to(device)
-            batch = processor(images=imgs, return_tensors="pt", do_rescale=False).to(device)
-            outputs = ema.module(**batch)
+            # batch = processor(images=imgs, return_tensors="pt", ).to(device)
+            outputs = ema.module(imgs)
             preds = outputs.logits.argmax(1).cpu().tolist()
 
             for f, p in zip(filenames, preds):
@@ -272,18 +275,26 @@ if __name__ == "__main__":
             )
 
             ema.to(device)
-            optimizer = make_optimizer_with_layerwise_lr(model, cfg)
+            # optimizer = make_optimizer_with_layerwise_lr(model, cfg)
+            optimizer = create_optimizer_v2(
+                model,
+                opt="adamw",
+                lr=cfg.training.lr,
+                weight_decay=cfg.training.w_decay,
+                layer_decay=cfg.training.layerwise_lr_decay
+            )
+
             criterion = nn.CrossEntropyLoss()
 
             # transforms
             transform = transforms.Compose([
                 transforms.Resize((cfg.dataset.image_size, cfg.dataset.image_size)),
-                transforms.RandomResizedCrop(
-                    size=cfg.dataset.image_size,
-                    scale=(0.9, 1.0),
-                    ratio=(0.95, 1.05)
-                ),
-                transforms.RandomRotation(degrees=10),
+                # transforms.RandomResizedCrop(
+                #     size=cfg.dataset.image_size,
+                #     scale=(0.9, 1.0),
+                #     ratio=(0.95, 1.05)
+                # ),
+                # transforms.RandomRotation(degrees=10),
                 # transforms.ColorJitter(
                 #     brightness=0.15,
                 #     contrast=0.15,
@@ -291,22 +302,24 @@ if __name__ == "__main__":
                 #     hue=0.05
                 # ),
                 transforms.ToTensor(),
+                transforms.Normalize(mean=processor.image_mean, std=processor.image_std)
             ])
 
             eval_transform = transforms.Compose([
                 transforms.Resize((cfg.dataset.image_size, cfg.dataset.image_size)),
                 transforms.ToTensor(),
+                transforms.Normalize(mean=processor.image_mean, std=processor.image_std)
             ])
 
-
-            # Dataset
+            # # Dataset
             train_ds = datasets.ImageFolder(cfg.dataset.train_dir, transform=transform)
-            val_ds = datasets.ImageFolder(cfg.dataset.val_dir, transform=eval_transform)
-
             train_dl = DataLoader(train_ds, batch_size=cfg.training.batch_size,
                                 shuffle=True, num_workers=cfg.dataset.num_workers, pin_memory=True)
-            val_dl = DataLoader(val_ds, batch_size=cfg.training.batch_size,
-                                shuffle=False, num_workers=cfg.dataset.num_workers, pin_memory=True)
+            do_val = cfg.training.get('val', False)
+            if do_val:
+                val_ds = datasets.ImageFolder(cfg.dataset.val_dir, transform=eval_transform)
+                val_dl = DataLoader(val_ds, batch_size=cfg.training.batch_size,
+                                    shuffle=False, num_workers=cfg.dataset.num_workers, pin_memory=True)
 
             test_ds = TestDataset(cfg.dataset.test_dir, transform=eval_transform)
             test_dl = DataLoader(test_ds, batch_size=cfg.training.batch_size,
@@ -317,46 +330,48 @@ if __name__ == "__main__":
             warmup_steps = int(cfg.training.warmup * total_steps)
             scheduler = get_lr_scheduler(cfg, optimizer, total_steps)
 
-
             best_val_acc = 0.0
             best_model_path = os.path.join(save_path, "best_val_model_ema.pth")
             for epoch in range(cfg.training.epochs):
                 logger.info(f"Epoch {epoch + 1}/{cfg.training.epochs}")
                 train_acc, train_loss = train_one_epoch(model, ema, train_dl, processor, optimizer, scheduler, criterion, device, scaler)
-                val_acc = evaluate(ema.module, val_dl, processor, device, name="Val-EMA", use_tqdm=True)
-                if val_acc > best_val_acc:
-                    best_val_acc = val_acc
-                    logger.info(f"New best Val-EMA Acc: {best_val_acc:.4f} — Saving best model")
-                    torch.save({
-                        'epoch': epoch + 1,
-                        'model_state_dict': ema.module.state_dict(),
-                        'val_acc': val_acc,
-                        'class_to_idx': train_ds.class_to_idx,
-                    }, best_model_path)
+                if do_val:
+                    val_acc = evaluate(ema.module, val_dl, processor, device, name="Val-EMA", use_tqdm=True)
+                    if  val_acc > best_val_acc:
+                        best_val_acc = val_acc
+                        logger.info(f"New best Val-EMA Acc: {best_val_acc:.4f} — Saving best model")
+                        torch.save({
+                            'epoch': epoch + 1,
+                            'model_state_dict': ema.module.state_dict(),
+                            'val_acc': val_acc,
+                            'class_to_idx': train_ds.class_to_idx,
+                        }, best_model_path)
 
-                    mlflow.log_artifact(best_model_path, artifact_path="models")
-                mlflow.log_metric("val_acc", val_acc, step=epoch)
+                        mlflow.log_artifact(best_model_path, artifact_path="models")
+                    val_acc = evaluate(ema.module, val_dl, processor, device, name="Val-EMA", use_tqdm=True)
+                    mlflow.log_metric("val_acc", val_acc, step=epoch)
                 mlflow.log_metric("train_acc", train_acc, step=epoch)
                 mlflow.log_metric("train_loss", train_loss, step=epoch)
                 mlflow.log_metric("lr", optimizer.param_groups[-1]['lr'], step=epoch)
 
             # Testing
+            print(os.path.join(save_path, "last_model_ema.pth"))
+            print(save_path)
             torch.save({
                 'epoch': epoch + 1,
                 'model_state_dict': ema.module.state_dict(),
-                'val_acc': val_acc,
                 'class_to_idx': train_ds.class_to_idx,
             }, os.path.join(save_path, "last_model_ema.pth"))
 
             logger.info("Running inference for test data")
             results_last = run_inference(device, processor, ema.module, ema, train_ds.classes, test_dl)
+            if os.path.isfile(best_model_path):
+                best_checkpoint = torch.load(best_model_path, map_location=device)
+                ema.module.load_state_dict(best_checkpoint['model_state_dict'])
+                results_best = run_inference(device, processor, ema.module, ema, train_ds.classes, test_dl)
+                save_experiment_artifacts(results_best, save_path, logger=None, suffix=f'{os.path.basename(cfg.experiment.run_name)}_best')
 
-            best_checkpoint = torch.load(best_model_path, map_location=device)
-            ema.module.load_state_dict(best_checkpoint['model_state_dict'])
-            results_best = run_inference(device, processor, ema.module, ema, train_ds.classes, test_dl)
-
-            save_experiment_artifacts(cfg, results_last, logger, suffix=f'{cfg.experiment.run_name}_last')
-            save_experiment_artifacts(cfg, results_best, logger=None, suffix=f'{cfg.experiment.run_name}_best')
+            save_experiment_artifacts(results_last, logger, save_path, suffix=f'{os.path.basename(cfg.experiment.run_name)}_last')
             logger.info("Experiment finished")
     except Exception as e:
         logger.error("Error")

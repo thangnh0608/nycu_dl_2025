@@ -76,8 +76,7 @@ def set_seed(seed=42):
     torch.backends.cudnn.benchmark = False
 
 
-def save_experiment_artifacts(cfg, results, logger=None, suffix=""):
-    save_path = os.path.join(cfg.experiment.save_dir, cfg.experiment.run_name)
+def save_experiment_artifacts(results, save_path, logger=None, suffix=""):
     os.makedirs(save_path, exist_ok=True)
 
     csv_path = os.path.join(save_path, f"test_results_{suffix}.csv")

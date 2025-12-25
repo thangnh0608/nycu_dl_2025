@@ -1,0 +1,74 @@
+dataset:
+  train_dir: ./data/train_split
+  test_dir: ./data/test
+  val_dir: ./data/val
+  val_pseudo_dir: ./data/test_pseudo
+  image_size: 448
+  num_workers: 4
+
+training:
+  val: True
+  batch_size: 64
+  lr: 1e-5
+  epochs: 50
+  w_decay: 0.05
+  warmup: 0.05
+  ema_decay: 0.998
+  amp: True
+  grad_clipping: 2.0
+  label_smoothing: 0.0
+  seed: 42
+  layerwise_lr_decay: 0.9
+  lr_scheduler: linear
+
+  lr_scheduler_params:
+    linear:
+      warmup_steps: 0.05
+      min_lr: 1e-8
+
+    cosine_warmup:
+      warmup_steps: 0.05
+      cycles: 2
+      min_lr: 1e-8
+augmentation:
+  # JPEG:
+  #     quality: [90, 98]
+  RandomHorizontalFlip:
+      p: 0.5
+
+  ColorJitter:
+      brightness: 0.2
+      contrast:   0.2
+      saturation: 0.1
+      hue:        0.1
+
+  RandomRotation:
+      degrees:    [-5, 5]
+
+  RandomErasing:
+      p:          0.3
+      scale:      [0.02, 0.33]
+      ratio:      [0.3, 3.3]
+      value:      0.0
+
+batch_augmentation:
+  # MixUp:
+  #   alpha: 0.2
+  #   num_classes: 2
+  # CutMix:
+  #   alpha: 0.2
+  #   num_classes: 2
+
+model:
+  name: timm/convnext_large.dinov3_lvd1689m
+  num_classes: 2
+  model_params:
+    timm/convnext_large.dinov3_lvd1689m:
+
+  weight:
+  freeze: 1
+
+experiment:
+  project: deeplearing_2025
+  run_name: convnext_large_dino_448
+  save_dir: outputs/timm/convnext_large.dinov3_lvd1689m

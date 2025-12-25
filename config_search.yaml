@@ -1,0 +1,68 @@
+dataset:
+    train_dir: ./data/train_split
+    test_dir: ./data/test
+    val_dir: ./data/val
+    image_size: 200
+    num_workers: 4
+training:
+    val: true
+    batch_size: 128
+    lr: 1e-5
+    epochs: 50
+    w_decay: 0.1
+    warmup: 0.05
+    ema_decay: 0.998
+    amp: true
+    grad_clipping: 2.0
+    seed: 42
+    layerwise_lr_decay: 0.8
+    lr_scheduler: linear
+    lr_scheduler_params:
+        linear:
+            warmup_steps: 0.05
+            min_lr: 1.0e-08
+        cosine_warmup:
+            warmup_steps: 0.05
+            cycles: 2
+            min_lr: 1.0e-08
+augmentation:
+    RandomResizedCrop:
+        size: 200
+        scale: [0.7, 1.0]
+    JPEG:
+        quality: [85, 95]
+    RandomHorizontalFlip:
+        p: 0.5
+    # RandomRotation:
+    #     degrees: 10
+    # ColorJitter:
+    #     brightness: 0.2
+    #     contrast: 0.2
+    #     saturation: 0.2
+    #     hue: 0.05
+    # GaussianBlur:
+    #     kernel_size: [3, 3]
+    #     sigma: [0.1, 2.0]
+    # RandomErasing:
+    #     p: 0.2
+    #     scale: [0.02, 0.2]
+
+batch_augmentation:
+    # MixUp:
+    #     alpha: 0.2
+    #     num_classes: 2
+#     CutMix:
+#         alpha: 0.2
+#         num_classes: 2
+
+model:
+    name: facebook/convnextv2-base-22k-224
+    num_classes: 2
+    model_params:
+        facebook/convnextv2-tiny-22k-224:
+            drop_path_rate: 0.3
+    weight: null
+experiment:
+    project: deeplearing_2025
+    run_name: convnextv2-base_lr_decay_200_augmen
+    save_dir: outputs/convnextv2_base

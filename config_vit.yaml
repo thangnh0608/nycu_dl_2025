@@ -1,0 +1,44 @@
+dataset:
+  train_dir: ./data/train_split
+  test_dir: ./data/test
+  val_dir: ./data/val
+  image_size: 224
+  num_workers: 4
+
+training:
+  val: False
+  batch_size: 64
+  lr: 1e-4
+  epochs: 30
+  w_decay: 0.05
+  warmup: 0.05
+  ema_decay: 0.998
+  amp: True
+  grad_clipping: 2.0
+
+  seed: 42
+  layerwise_lr_decay: 0.9
+  lr_scheduler: linear
+
+  lr_scheduler_params:
+    linear:
+      warmup_steps: 0.05
+      min_lr: 1e-7
+
+    cosine_warmup:
+      warmup_steps: 0.05
+      cycles: 2
+      min_lr: 1e-8
+model:
+  name: google/vit-base-patch16-224
+  num_classes: 2
+  model_params:
+    google/vit-base-patch16-224:
+      hidden_dropout_prob: 0.3
+      attention_probs_dropout_prob: 0.3
+  weight:
+
+experiment:
+  project: deeplearing_2025
+  run_name: vit-base-patch16-224
+  save_dir: outputs/vit-base-patch16-224

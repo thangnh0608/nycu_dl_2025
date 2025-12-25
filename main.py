@@ -10,11 +10,11 @@ TRAIN_SCRIPT = "train.py"                  # your training script
 CONFIGS_DIR = "configs/temp"
 os.makedirs(CONFIGS_DIR, exist_ok=True)
 
-# Hyperparameter grid to sweep — model fixed to google/vit-base-patch16-224
 # Batch size is NOT tuned (kept fixed as in base config)
 PARAM_GRID = {
     "training.w_decay": [0.05, 0.1],
-    "layerwise_lr_decay": [0.3, 0.3, 0.7],
+    "training.layerwise_lr_decay": [0.8, 0.7],
+    "model.model_params.facebook/convnextv2-tiny-22k-224.drop_path_rate": [0.2, 0.3],
 }
 
 # Load base config
@@ -34,19 +34,25 @@ print(f"Total experiments: {total_runs}\n")
 
 for i, combo in enumerate(combinations):
     overrides = dict(zip(keys, combo))
-    run_cfg = OmegaConf.merge(base_cfg, overrides)
+    # run_cfg = OmegaConf.merge(base_cfg, overrides)
+    run_cfg = OmegaConf.create(OmegaConf.to_container(base_cfg, resolve=True))
+
+    for k, v in overrides.items():
+        OmegaConf.update(run_cfg, k, v, merge=True)
 
     # Extract info for unique naming (model is fixed)
     model_name_short = run_cfg.model.name.split("/")[-1]  # e.g., vit-base-patch16-224
     lr = run_cfg.training.lr
     ep = run_cfg.training.epochs
     wd = run_cfg.training.w_decay
+    lw_lr_decay = run_cfg.training.layerwise_lr_decay
     # h_drop = run_cfg.model.model_params["google/vit-base-patch16-224"].hidden_dropout_prob
     # a_drop = run_cfg.model.model_params["google/vit-base-patch16-224"].attention_probs_dropout_prob
     bs = run_cfg.training.batch_size  # included for info, but not tuned
 
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    suffix = f"{model_name_short}_lr{lr}_ep{ep}_wd{wd}_{timestamp}"
+    suffix = f"{model_name_short}_lr{lr}_ep{ep}_wd{wd}_lw_lr{lw_lr_decay}_{timestamp}"
 
     # Unique output directory per run
     run_cfg.experiment.run_name = f"{base_cfg.experiment.run_name}/{suffix}"

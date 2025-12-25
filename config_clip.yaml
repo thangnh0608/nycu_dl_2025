@@ -1,0 +1,66 @@
+dataset:
+  train_dir: ./data/train_split
+  test_dir: ./data/test
+  val_dir: ./data/val
+  image_size: 224 # Standard for CLIP ViT-B/16
+  num_workers: 4
+
+training:
+  val: True
+  batch_size: 64
+  lr: 1e-5
+  epochs: 50
+  w_decay: 0.05
+  warmup: 0.05
+  ema_decay: 0.998
+  amp: True
+  grad_clipping: 2.0
+  label_smoothing: 0.1
+
+  seed: 42
+  layerwise_lr_decay: 0.5
+  lr_scheduler: linear
+
+  lr_scheduler_params:
+    linear:
+      warmup_steps: 0.05
+      min_lr: 1e-7
+augmentation:
+    RandomResizedCrop:
+        size: 224
+        scale: [0.7, 1.0]
+    # JPEG:
+    #     quality: [85, 95]
+    RandomHorizontalFlip:
+        p: 0.5
+    RandomGrayscale:
+        p: 0.1
+    GaussianBlur:
+        kernel_size: [3, 3]
+        sigma: [0.1, 1.0]
+
+batch_augmentation:
+  # MixUp:
+  #   alpha: 0.2
+  #   num_classes: 2
+  # CutMix:
+  #   alpha: 0.2
+  #   num_classes: 2
+
+model:
+  name: laion/CLIP-ViT-H-14-laion2B-s32B-b79K
+  num_classes: 2
+  model_params:
+    laion/CLIP-ViT-H-14-laion2B-s32B-b79K:
+      vision_config:
+        attention_dropout: 0.3
+        dropout: 0.3
+      text_config:
+        attention_dropout: 0.3
+        dropout: 0.3
+  weight:
+
+experiment:
+  project: deeplearning_2025
+  run_name: laion-clip-b16-finetune
+  save_dir: outputs/laion-clip-b16

@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split, Dataset
 from torchvision import datasets, transforms
+from torchvision.transforms import v2
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 from omegaconf import OmegaConf
@@ -79,15 +80,24 @@ def set_seed(seed=42):
 def save_experiment_artifacts(results, save_path, logger=None, suffix=""):
     os.makedirs(save_path, exist_ok=True)
 
-    csv_path = os.path.join(save_path, f"test_results_{suffix}.csv")
-    with open(csv_path, "w", newline="") as f:
+    csv_submit_path = os.path.join(save_path, f"submission_{suffix}.csv")
+    csv_score_path  = os.path.join(save_path, f"test_results_{suffix}.csv")
+
+
+    with open(csv_submit_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["filename", "label"])
+        writer.writerows([(fn, lb) for fn, lb, _ in results])
+
+    with open(csv_score_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["filename", "label", "score"])
         writer.writerows(results)
 
+    mlflow.log_artifact(csv_score_path)
+
     if logger is not None:
-        logger.info(f"Saved test results to {csv_path}")
-        mlflow.log_artifact(csv_path)
+        logger.info(f"Saved test results to {csv_score_path}")
 
         for h in logger.handlers:
             if hasattr(h, "flush"):
@@ -110,6 +120,97 @@ def flatten_omegaconf(cfg, resolve: bool = True) -> Dict[str, Any]:
         return items
 
     return _flatten(container)
+
+
+def get_transforms_from_cfg(config_dict, processor=None):
+    augmen_config = config_dict.augmentation
+    transforms_list = [
+        v2.ToImage(),
+        v2.Resize(config_dict.dataset.image_size)
+    ]
+    late_transforms = []
+    if augmen_config is not None:
+        augmen_config = OmegaConf.to_container(augmen_config, resolve=True)
+    else:
+        augmen_config = {}
+
+    for transform_name, params in augmen_config.items():
+        transform_class = getattr(v2, transform_name)
+        if params is not None:
+            instance = transform_class(**params) if isinstance(params, dict) else transform_class(params)
+        else:
+            instance = transform_class()
+
+        if transform_name == "RandomErasing":
+            late_transforms.append(instance)
+        else:
+            transforms_list.append(instance)
+
+    # 2. Append ToTensor
+    transforms_list.append(v2.ToDtype(torch.float32, scale=True),)
+    transforms_list.extend(late_transforms)
+    # 3. Append Normalize with HF processor mean/std if available
+    if processor and hasattr(processor, "image_mean") and hasattr(processor, "image_std"):
+        mean = processor.image_mean
+        std = processor.image_std
+    else:
+        try:
+            mean = processor.mean
+            std = processor.std
+        except:
+            mean = [0.485, 0.456, 0.406]
+            std = [0.229, 0.224, 0.225]
+    transforms_list.append(v2.Normalize(mean=mean, std=std))
+    transform = v2.Compose(transforms_list)
+    eval_transform = transforms.Compose([
+        v2.ToImage(),
+        v2.Resize((config_dict.dataset.image_size, config_dict.dataset.image_size)),
+        v2.ToDtype(torch.float32, scale=True),
+        v2.Normalize(mean=mean, std=std)
+    ])
+
+    return transform, eval_transform
+
+def apply_overrides(obj, overrides: dict):
+    """Recursively apply nested dict overrides to a config object."""
+    for k, v in overrides.items():
+        if not hasattr(obj, k):
+            raise KeyError(f"Invalid config key: {k}")
+        attr = getattr(obj, k)
+        # If value is a dict and attribute is a nested config
+        if isinstance(v, dict) and hasattr(attr, "__dict__"):
+            apply_overrides(attr, v)
+        else:
+            setattr(obj, k, v)
+
+def run_inference(device, model, ema, class_to_idx, test_dl):
+    model.eval()
+    results = []
+    with torch.no_grad():
+        for imgs, filenames in test_dl:
+            imgs = imgs.to(device)
+            # batch = processor(images=imgs, return_tensors="pt", ).to(device)
+            outputs = ema.module(imgs)
+            score = torch.softmax(outputs.logits, dim=1).cpu().tolist()
+            preds = outputs.logits.argmax(1).cpu().tolist()
+
+            for f, p, s in zip(filenames, preds, score):
+                results.append((f[:-4], class_to_idx[p], s))
+    return results
+
+def make_transforms(cfg, processor):
+    transform, eval_transform = get_transforms_from_cfg(cfg, processor)
+
+    if cfg.get("batch_augmentation", False) and "MixUp" in cfg.batch_augmentation and "CutMix" in cfg.batch_augmentation:
+        m_alpha = cfg.batch_augmentation.MixUp.get("alpha", 1.0)
+        c_alpha = cfg.batch_augmentation.CutMix.get("alpha", 1.0)
+        mixup = v2.MixUp(num_classes=cfg.model.num_classes, alpha=m_alpha)
+        cutmix = v2.CutMix(num_classes=cfg.model.num_classes, alpha=c_alpha)
+
+        batch_aug = v2.RandomChoice([mixup, cutmix])
+    else:
+        batch_aug = None
+    return transform, eval_transform, batch_aug
 
 if __name__ == "__main__":
     test_cfg = OmegaConf.load("config.yaml")

@@ -10,6 +10,9 @@ from omegaconf import OmegaConf
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 from ema import ModelEmaV3
+from utils import apply_overrides
+from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoConfig
+
 # Custom Dataset for unlabeled test images
 class TestDataset(Dataset):
     def __init__(self, root_dir, transform=None):
@@ -29,14 +32,32 @@ class TestDataset(Dataset):
         return image, self.files[idx]
 
 def load_hf_model(model_name, num_classes, cfg):
+    model_cfg = AutoConfig.from_pretrained(cfg.model.name)
+
     processor = AutoImageProcessor.from_pretrained(model_name)
-    model_params = cfg.model.get("model_params", {}).get(model_name, {})
+
+    model_params = OmegaConf.to_container(
+        cfg.model.get("model_params", {}).get(model_name, {}),
+        resolve=True
+    )
+
+    apply_overrides(model_cfg, model_params)
+
+    model_cfg.num_labels = num_classes
+
     model = AutoModelForImageClassification.from_pretrained(
         model_name,
-        num_labels=num_classes,
-        ignore_mismatched_sizes=True,
-        **model_params
+        config=model_cfg,
+        ignore_mismatched_sizes=True
     )
+    for param in model.vision_model.embeddings.parameters():
+        param.requires_grad = False
+
+    for block in model.vision_model.encoder.layers:
+        for name, param in block.named_parameters():
+            if "mlp" not in name:
+                param.requires_grad = False
+
     return processor, model
 
 def main():

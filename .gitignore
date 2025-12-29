@@ -12,3 +12,7 @@ mlruns
 outputs
 data
 configs
+
+*.jpg
+*.csv
+*.pth

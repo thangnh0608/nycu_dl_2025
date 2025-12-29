@@ -1,17 +1,16 @@
 dataset:
-  train_dir: ./data/train_split
+  train_dir: ./dataset_split/train_split
   test_dir: ./data/test
-  val_dir: ./data/val
-  val_pseudo_dir: ./data/test_pseudo
-  image_size: 448
+  val_dir: ./dataset_split/val
+  image_size: 384
   num_workers: 4
 
 training:
   val: True
   batch_size: 64
   lr: 1e-5
-  epochs: 50
-  w_decay: 0.05
+  epochs: 30
+  w_decay: 0.1
   warmup: 0.05
   ema_decay: 0.998
   amp: True
@@ -24,7 +23,7 @@ training:
   lr_scheduler_params:
     linear:
       warmup_steps: 0.05
-      min_lr: 1e-8
+      min_lr: 2.2500214500493356e-06
 
     cosine_warmup:
       warmup_steps: 0.05
@@ -36,25 +35,25 @@ augmentation:
   RandomHorizontalFlip:
       p: 0.5
 
-  ColorJitter:
-      brightness: 0.2
-      contrast:   0.2
-      saturation: 0.1
-      hue:        0.1
+  # ColorJitter:
+  #     brightness: 0.1
+  #     contrast:   0.1
+  #     saturation: 0.1
+  #     hue:        0.1
 
-  RandomRotation:
-      degrees:    [-5, 5]
+  # RandomRotation:
+  #     degrees:    [-5, 5]
 
-  RandomErasing:
-      p:          0.3
-      scale:      [0.02, 0.33]
-      ratio:      [0.3, 3.3]
-      value:      0.0
+  # RandomErasing:
+  #     p:          0.3
+  #     scale:      [0.02, 0.33]
+  #     ratio:      [0.3, 3.3]
+  #     value:      0.0
 
-batch_augmentation:
-  # MixUp:
-  #   alpha: 0.2
-  #   num_classes: 2
+# batch_augmentation:
+#   MixUp:
+#     alpha: 0.2
+#     num_classes: 2
   # CutMix:
   #   alpha: 0.2
   #   num_classes: 2
@@ -70,5 +69,5 @@ model:
 
 experiment:
   project: deeplearing_2025
-  run_name: convnext_large_dino_448
+  run_name: convnext_large_dino_384_wdecay
   save_dir: outputs/timm/convnext_large.dinov3_lvd1689m

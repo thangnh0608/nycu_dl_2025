@@ -2,6 +2,7 @@ import os
 import argparse
 import torch
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 import csv
 from tqdm import tqdm
 from torch.utils.data import DataLoader, Dataset
@@ -10,8 +11,33 @@ from omegaconf import OmegaConf
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 from ema import ModelEmaV3
-from utils import apply_overrides
+from utils import apply_overrides, get_transforms_from_cfg
 from transformers import AutoImageProcessor, AutoModelForImageClassification, AutoConfig
+
+
+def apply_tta(imgs):
+    """
+    imgs: Tensor [B, C, H, W]
+    returns: list of augmented tensors
+    """
+    tta_imgs = []
+
+    # Original
+    tta_imgs.append(imgs)
+
+    # Horizontal flip
+    tta_imgs.append(TF.hflip(imgs))
+
+    # Slight scale (down + up)
+    small = torch.nn.functional.interpolate(
+        imgs, scale_factor=0.95, mode="bilinear", align_corners=False
+    )
+    small = torch.nn.functional.interpolate(
+        small, size=imgs.shape[-2:], mode="bilinear", align_corners=False
+    )
+    tta_imgs.append(small)
+
+    return tta_imgs
 
 # Custom Dataset for unlabeled test images
 class TestDataset(Dataset):
@@ -36,12 +62,14 @@ def load_hf_model(model_name, num_classes, cfg):
 
     processor = AutoImageProcessor.from_pretrained(model_name)
 
-    model_params = OmegaConf.to_container(
-        cfg.model.get("model_params", {}).get(model_name, {}),
-        resolve=True
-    )
+    model_params = cfg.model.get("model_params", {}).get(model_name, {})
+    if model_params:
+        model_params = OmegaConf.to_container(
+            model_params,
+            resolve=True
+        )
 
-    apply_overrides(model_cfg, model_params)
+        apply_overrides(model_cfg, model_params)
 
     model_cfg.num_labels = num_classes
 
@@ -50,13 +78,20 @@ def load_hf_model(model_name, num_classes, cfg):
         config=model_cfg,
         ignore_mismatched_sizes=True
     )
-    for param in model.vision_model.embeddings.parameters():
+    N = cfg.model.get("freeze", 1)
+    for i, block in enumerate(model.timm_model.stages):
+        if i < N:
+            for param in block.parameters():
+                param.requires_grad = False
+        else:
+            for param in block.parameters():
+                param.requires_grad = True
+
+    for param in model.timm_model.stem.parameters():
         param.requires_grad = False
 
-    for block in model.vision_model.encoder.layers:
-        for name, param in block.named_parameters():
-            if "mlp" not in name:
-                param.requires_grad = False
+    for param in model.timm_model.head.parameters():
+        param.requires_grad = True
 
     return processor, model
 
@@ -65,6 +100,7 @@ def main():
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--tta", action="store_true",)
     parser.add_argument("--output", type=str, default="test_predictions_05.csv")
     args = parser.parse_args()
 
@@ -101,11 +137,7 @@ def main():
         raise ValueError("Could not detect 'real' and 'fake' classes from checkpoint.")
 
     # 3. Data Loading
-    transform_test = transforms.Compose([
-        transforms.Resize((cfg.dataset.image_size, cfg.dataset.image_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=processor.image_mean, std=processor.image_std)
-    ])
+    transform, transform_test = get_transforms_from_cfg(cfg, processor)
 
     test_ds = TestDataset(cfg.dataset.test_dir, transform=transform_test)
     test_dl = DataLoader(test_ds, batch_size=cfg.training.batch_size, shuffle=False, num_workers=cfg.dataset.num_workers)
@@ -119,21 +151,41 @@ def main():
     with torch.no_grad():
         for imgs, filenames in test_dl:
             imgs = imgs.to(device)
-            outputs = ema.module(imgs)
-            preds = outputs.logits.argmax(1).cpu().tolist()
+            if args.tta:
+                tta_imgs = apply_tta(imgs)
+
+                logits_sum = None
+                for aug_imgs in tta_imgs:
+                    outputs = ema.module(aug_imgs)
+                    logits = outputs.logits
+
+                    if logits_sum is None:
+                        logits_sum = logits
+                    else:
+                        logits_sum += logits
+
+                logits = logits_sum / len(tta_imgs)
+
+            else:
+                outputs = ema.module(imgs)
+                logits = outputs.logits
+            preds = logits.argmax(1).cpu().tolist()
+            score = torch.softmax(logits, dim=1).cpu().tolist()
 
             for i in range(len(filenames)):
                 fname = os.path.splitext(filenames[i])[0]
                 predicted_label = idx_to_class[preds[i]]
+                score_i = score[i]
 
                 results.append({
                     'filename': fname,
-                    'label': predicted_label
+                    'label': predicted_label,
+                    'score': score_i
                 })
 
     # 5. Save to CSV
     with open(args.output, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['filename', 'label'])
+        writer = csv.DictWriter(f, fieldnames=['filename', 'label', 'score'])
         writer.writeheader()
         writer.writerows(results)
 

@@ -24,10 +24,12 @@ from utils import (
     set_seed,
     flatten_omegaconf,
     get_transforms_from_cfg,
-    run_inference
+    run_inference,
+    apply_overrides
 )
 
-
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 class TestDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
@@ -64,18 +66,6 @@ def get_args():
     parser.add_argument("--config", type=str, required=True)
     return parser.parse_args()
 
-
-def apply_overrides(obj, overrides: dict):
-    """Recursively apply nested dict overrides to a config object."""
-    for k, v in overrides.items():
-        if not hasattr(obj, k):
-            raise KeyError(f"Invalid config key: {k}")
-        attr = getattr(obj, k)
-        # If value is a dict and attribute is a nested config
-        if isinstance(v, dict) and hasattr(attr, "__dict__"):
-            apply_overrides(attr, v)
-        else:
-            setattr(obj, k, v)
 
 
 def load_hf_model(model_name, num_classes, cfg):
@@ -305,7 +295,6 @@ if __name__ == "__main__":
             )
 
             ema.to(device)
-            # optimizer = make_optimizer_with_layerwise_lr(model, cfg)
             optimizer = create_optimizer_v2(
                 model,
                 opt="adamw",

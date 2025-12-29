@@ -1,7 +1,7 @@
 dataset:
-  train_dir: ./data/train_split
+  train_dir: ./dataset_split/train_split
   test_dir: ./data/test
-  val_dir: ./data/val
+  val_dir: ./dataset_split/val
   image_size: 224
   num_workers: 4
 
@@ -9,7 +9,8 @@ training:
   val: True
   batch_size: 64
   lr: 1e-5
-  epochs: 50
+  fft_lr: 1e-5
+  epochs: 60
   w_decay: 0.05
   warmup: 0.05
   ema_decay: 0.998
@@ -19,7 +20,7 @@ training:
   seed: 42
   layerwise_lr_decay: 0.9
   lr_scheduler: linear
-
+  unfreeze_rgb_after: 20
   lr_scheduler_params:
     linear:
       warmup_steps: 0.05
@@ -35,20 +36,20 @@ augmentation:
   RandomHorizontalFlip:
       p: 0.5
 
-  ColorJitter:
-      brightness: 0.2
-      contrast:   0.2
-      saturation: 0.1
-      hue:        0.1
+  # ColorJitter:
+  #     brightness: 0.2
+  #     contrast:   0.2
+  #     saturation: 0.1
+  #     hue:        0.1
 
-  RandomRotation:
-      degrees:    [-5, 5]
+  # RandomRotation:
+  #     degrees:    [-5, 5]
 
-  RandomErasing:
-      p:          0.3
-      scale:      [0.02, 0.33]
-      ratio:      [0.3, 3.3]
-      value:      0.0
+  # RandomErasing:
+  #     p:          0.3
+  #     scale:      [0.02, 0.33]
+  #     ratio:      [0.3, 3.3]
+  #     value:      0.0
 
 batch_augmentation:
   # MixUp:
@@ -59,15 +60,15 @@ batch_augmentation:
   #   num_classes: 2
 
 model:
-  name: timm/vit_large_patch16_dinov3.sat493m
+  name: timm/convnext_large.dinov3_lvd1689m
   num_classes: 2
   model_params:
-    timm/vit_large_patch16_dinov3.sat493m:
+    timm/convnext_large.dinov3_lvd1689m:
 
   weight:
-  freeze: 8
+  freeze: 1
 
 experiment:
   project: deeplearing_2025
-  run_name: timm/vit_large_patch16_dinov3.sat493m
-  save_dir: outputs/timm/vit_large_patch16_dinov3.sat493m
+  run_name: convnext_large_dino_fft_convnext_base
+  save_dir: outputs/timm/convnext_large.dinov3_lvd1689m

@@ -17,6 +17,17 @@ from transformers import AutoImageProcessor, AutoModelForImageClassification
 from omegaconf import OmegaConf
 import mlflow
 
+def apply_overrides(obj, overrides: dict):
+    """Recursively apply nested dict overrides to a config object."""
+    for k, v in overrides.items():
+        if not hasattr(obj, k):
+            raise KeyError(f"Invalid config key: {k}")
+        attr = getattr(obj, k)
+        # If value is a dict and attribute is a nested config
+        if isinstance(v, dict) and hasattr(attr, "__dict__"):
+            apply_overrides(attr, v)
+        else:
+            setattr(obj, k, v)
 
 def make_optimizer_with_layerwise_lr(model, cfg):
     base_lr = cfg.training.lr
@@ -176,6 +187,7 @@ def apply_overrides(obj, overrides: dict):
     for k, v in overrides.items():
         if not hasattr(obj, k):
             raise KeyError(f"Invalid config key: {k}")
+            
         attr = getattr(obj, k)
         # If value is a dict and attribute is a nested config
         if isinstance(v, dict) and hasattr(attr, "__dict__"):

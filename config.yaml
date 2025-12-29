@@ -1,22 +1,23 @@
 dataset:
-  train_dir: ./data/train_split
+  train_dir: ./data/train
   test_dir: ./data/test
   val_dir: ./data/val
-  image_size: 224
+  image_size: 200
   num_workers: 4
 
 training:
+  val: False
   batch_size: 128
-  lr: 1e-5
-  epochs: 30
-  w_decay: 0.1
+  lr: 1e-4
+  epochs: 25
+  w_decay: 0.05
   warmup: 0.05
   ema_decay: 0.998
   amp: True
   grad_clipping: 2.0
 
   seed: 42
-  layerwise_lr_decay: 0.5
+  layerwise_lr_decay: 0.9
   lr_scheduler: linear
 
   lr_scheduler_params:
@@ -28,15 +29,28 @@ training:
       warmup_steps: 0.05
       cycles: 2
       min_lr: 1e-8
+
+augmentation:
+  # Pad:
+  #   padding: 4
+  # RandomResizedCrop:
+  #   size: 224
+  #   scale: [0.9, 1.1]
+  # JPEG:
+  #   quality: 90
+  # RandomHorizontalFlip:
+  #   p: 0.5
+
+
 model:
-  name: facebook/convnextv2-base-22k-224
+  name: facebook/convnextv2-tiny-22k-224
   num_classes: 2
   model_params:
     facebook/convnextv2-tiny-22k-224:
-      drop_path_rate: 0.3
-  weight: outputs/convnextv2_base_pretraining/convnextv2-base-22k-224_pretraining/last_model_ema.pth
+      drop_path_rate: 0.4
+  weight:
 
 experiment:
   project: deeplearing_2025
-  run_name: convnextv2-base-22k-224_con_linear_wdcay
-  save_dir: outputs/convnextv2_base
+  run_name: convnextv2-tiny_lr_decay_200_timm_search
+  save_dir: outputs/convnextv2_tiny
